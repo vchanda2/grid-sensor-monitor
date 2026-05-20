@@ -5,3 +5,5 @@ __pycache__/
 *.csv
 *.xlsx
 *.log
+*.txt
+*.zip
