@@ -5,13 +5,11 @@ import plotly.graph_objects as go
 import joblib
 import sys
 
-sys.path.append("src")  # add src to path for imports if needed
+sys.path.append("src")
 
 # ── Page config ──────────────────────────────────────────────
 st.set_page_config(
-    page_title="Grid Sensor Data Quality Monitor",
-    page_icon="⚡",  # emoji can be obtained from https://www.webfx.com/tools/emoji-cheat-sheet/
-    layout="wide",
+    page_title="Grid Sensor Data Quality Monitor", page_icon="⚡", layout="wide"
 )
 
 
@@ -19,10 +17,10 @@ st.set_page_config(
 @st.cache_data
 def load_data():
     tagged = pd.read_csv(
-        "data/processed/tagged_hourly.csv", index_col="datetime", parse_dates=True
+        "results/anomalies.csv", index_col="datetime", parse_dates=True
     )
     hourly = pd.read_csv(
-        "data/processed/hourly.csv", index_col="datetime", parse_dates=True
+        "results/hourly_power.csv", index_col="datetime", parse_dates=True
     ).squeeze()
     return tagged, hourly
 
@@ -51,15 +49,15 @@ def build_features(series):
     df["lag_2h"] = series.shift(2)
     df["lead_1h"] = series.shift(-1)
     df["hour"] = series.index.hour
-    df["dayofweek"] = series.index.dayofweek
-    df["is_weekend"] = (df["dayofweek"] >= 5).astype(int)
+    df["day_of_week"] = series.index.dayofweek
+    df["is_weekend"] = (df["day_of_week"] >= 5).astype(int)
     return df.fillna(df.median()).drop(columns=["value"])
 
 
 # ── Fault injector ────────────────────────────────────────────
 def inject_fault(series, fault_type, start, duration_hours):
     injected = series.copy()
-    idx = pd.date_range(start=start, periods=duration_hours, freq="H")
+    idx = pd.date_range(start=start, periods=duration_hours, freq="h")
     idx = idx[idx.isin(series.index)]
     if fault_type == "Spike":
         injected[idx] = series.mean() + 6 * series.std()
