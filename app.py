@@ -5,38 +5,38 @@ import plotly.graph_objects as go
 import joblib
 import sys
 
-sys.path.append("src")
+sys.path.append("src") # Add src to path for imports if needed
 
 # ── Page config ──────────────────────────────────────────────
 st.set_page_config(
     page_title="Grid Sensor Data Quality Monitor", page_icon="⚡", layout="wide"
-)
+) # this is for the browser tab title and icon, and sets the layout to wide for better use of horizontal space.
 
 
 # ── Load data & model ─────────────────────────────────────────
-@st.cache_data
+@st.cache_data # Cache the loaded data to speed up subsequent runs. This means the CSV files won't be re-read from disk unless they change.
 def load_data():
     tagged = pd.read_csv(
         "results/anomalies.csv", index_col="datetime", parse_dates=True
-    )
+    ) 
     hourly = pd.read_csv(
         "results/hourly_power.csv", index_col="datetime", parse_dates=True
-    ).squeeze()
+    ).squeeze() # squeeze to convert single-column DataFrame to Series for easier handling in feature builder and plotting.
     return tagged, hourly
 
 
-@st.cache_resource
+@st.cache_resource # Cache the loaded model to avoid reloading it on every interaction. The model will only be reloaded if the underlying file changes.
 def load_model():
     model = joblib.load("models/xgb_anomaly_classifier.pkl")
     feature_cols = joblib.load("models/feature_columns.pkl")
     return model, feature_cols
 
 
-tagged, hourly = load_data()
+tagged, hourly = load_data() 
 model, feature_cols = load_model()
 
 
-# ── Feature builder (same as Day 3) ──────────────────────────
+# ── Feature builder (same as in notebook) ──────────────────────────
 def build_features(series):
     df = pd.DataFrame({"value": series})
     for w in [3, 6, 24]:
@@ -81,7 +81,7 @@ COLORS = {
 # ══════════════════════════════════════════════════════════════
 st.title("⚡ Grid Sensor Data Quality Monitor")
 st.markdown("*Automated anomaly detection for electric distribution sensor data*")
-st.divider()
+st.divider() # A horizontal line to visually separate the header from the rest of the content.
 
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR
@@ -97,7 +97,7 @@ with st.sidebar:
         value=pd.to_datetime("2008-01-01"),
         min_value=min_date,
         max_value=max_date,
-    )
+    ) #
     end_date = st.date_input(
         "To", value=pd.to_datetime("2008-03-31"), min_value=min_date, max_value=max_date
     )
