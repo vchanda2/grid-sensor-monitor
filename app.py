@@ -308,3 +308,5 @@ if st.session_state.injected:
         )
     else:
         st.error(f"❌ Injected fault not detected. Try lowering the spike threshold.")
+
+# thats it
