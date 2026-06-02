@@ -1,3 +1,4 @@
+import io
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -13,26 +14,22 @@ st.set_page_config(
 ) # this is for the browser tab title and icon, and sets the layout to wide for better use of horizontal space.
 
 
-# ── Load data & model ─────────────────────────────────────────
-@st.cache_data # Cache the loaded data to speed up subsequent runs. This means the CSV files won't be re-read from disk unless they change.
-def load_data():
-    tagged = pd.read_csv(
-        "results/anomalies.csv", index_col="datetime", parse_dates=True
-    ) 
-    hourly = pd.read_csv(
-        "results/hourly_power.csv", index_col="datetime", parse_dates=True
-    ).squeeze() # squeeze to convert single-column DataFrame to Series for easier handling in feature builder and plotting.
-    return tagged, hourly
-
-
-@st.cache_resource # Cache the loaded model to avoid reloading it on every interaction. The model will only be reloaded if the underlying file changes.
+# ── Load model ────────────────────────────────────────────────
+@st.cache_resource
 def load_model():
     model = joblib.load("models/xgb_anomaly_classifier.pkl")
     feature_cols = joblib.load("models/feature_columns.pkl")
     return model, feature_cols
 
 
-tagged, hourly = load_data() 
+@st.cache_data
+def process_upload(file_bytes):
+    df = pd.read_csv(io.BytesIO(file_bytes), sep=";", na_values=["?"], low_memory=False)
+    df["datetime"] = pd.to_datetime(df["Date"] + " " + df["Time"], dayfirst=True)
+    df = df.drop(columns=["Date", "Time"]).set_index("datetime").sort_index()
+    return df["Global_active_power"].resample("h").mean()
+
+
 model, feature_cols = load_model()
 
 
@@ -89,6 +86,18 @@ st.divider() # A horizontal line to visually separate the header from the rest o
 with st.sidebar:
     st.header("⚙️ Controls")
 
+    uploaded_file = st.file_uploader(
+        "Upload household_power_consumption.txt",
+        type=["txt"],
+        help="Download from the UCI Machine Learning Repository.",
+    )
+    if uploaded_file is None:
+        st.info("Upload the dataset above to get started.")
+        st.stop()
+
+    hourly = process_upload(uploaded_file.getvalue())
+
+    st.divider()
     st.subheader("Date Range")
     min_date = hourly.index.min().date()
     max_date = hourly.index.max().date()
