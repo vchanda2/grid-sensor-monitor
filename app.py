@@ -65,6 +65,18 @@ def inject_fault(series, fault_type, start, duration_hours):
     return injected, idx
 
 
+# ── Rule-based detector ──────────────────────────────────────
+def rule_based_detect(series, spike_std, flatline_thresh):
+    rm24 = series.rolling(24, min_periods=1).mean()
+    rs24 = series.rolling(24, min_periods=1).std().fillna(0)
+    rs6  = series.rolling(6,  min_periods=1).std().fillna(0)
+    labels = pd.Series("normal", index=series.index)
+    labels[rs6 < flatline_thresh] = "flatline"
+    labels[series > rm24 + spike_std * rs24] = "spike"
+    labels[series.isna()] = "dropout"
+    return labels
+
+
 # ── Color map ─────────────────────────────────────────────────
 COLORS = {
     "normal": "#2196F3",
@@ -121,6 +133,15 @@ with st.sidebar:
         help="Lower = more sensitive, more false alarms. Higher = stricter, may miss spikes.",
     )
 
+    flatline_thresh = st.slider(
+        "Flatline threshold (kW std over 6h)",
+        min_value=0.01,
+        max_value=0.30,
+        value=0.05,
+        step=0.01,
+        help="Rolling 6h std below this → flagged as flatline.",
+    )
+
     st.divider()
     st.subheader("🧪 Inject a Synthetic Fault")
     fault_type = st.selectbox("Fault type", ["Spike", "Flatline", "Dropout"])
@@ -151,13 +172,16 @@ if inject:
     st.session_state.fault_idx = fault_idx
     st.session_state.fault_type = fault_type
 
-# Run detection + classification
+# XGBoost detection
 features = build_features(series)[feature_cols]
 preds = model.predict(features)
 proba = model.predict_proba(features)
 label_map = {0: "normal", 1: "dropout", 2: "spike", 3: "flatline"}
 pred_labels = pd.Series([label_map[p] for p in preds], index=series.index)
 confidence = pd.Series(proba.max(axis=1), index=series.index).round(3)
+
+# Rule-based detection
+rb_labels = rule_based_detect(series, spike_std, flatline_thresh)
 
 # ══════════════════════════════════════════════════════════════
 # KPI CARDS
@@ -318,4 +342,94 @@ if st.session_state.injected:
     else:
         st.error(f"❌ Injected fault not detected. Try lowering the spike threshold.")
 
-# thats it
+# ══════════════════════════════════════════════════════════════
+# METHOD COMPARISON
+# ══════════════════════════════════════════════════════════════
+st.divider()
+st.subheader("🔬 XGBoost vs Rule-Based Comparison")
+
+rb_counts = rb_labels.value_counts()
+
+col_xgb, col_rb = st.columns(2)
+
+with col_xgb:
+    st.markdown("**XGBoost Model**")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Normal",   f"{counts.get('normal',   0):,}")
+    m2.metric("Spikes",   f"{counts.get('spike',    0):,}")
+    m3.metric("Flatlines",f"{counts.get('flatline', 0):,}")
+    m4.metric("Dropouts", f"{counts.get('dropout',  0):,}")
+
+with col_rb:
+    st.markdown("**Rule-Based**")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Normal",   f"{rb_counts.get('normal',   0):,}")
+    m2.metric("Spikes",   f"{rb_counts.get('spike',    0):,}")
+    m3.metric("Flatlines",f"{rb_counts.get('flatline', 0):,}")
+    m4.metric("Dropouts", f"{rb_counts.get('dropout',  0):,}")
+
+# Rule-based time series
+fig_rb = go.Figure()
+fig_rb.add_trace(
+    go.Scatter(
+        x=series.index, y=series.values,
+        mode="lines", name="Signal",
+        line=dict(color="#90CAF9", width=1), opacity=0.8,
+    )
+)
+for atype, color in COLORS.items():
+    if atype == "normal":
+        continue
+    mask = rb_labels == atype
+    if mask.sum() == 0:
+        continue
+    fig_rb.add_trace(
+        go.Scatter(
+            x=series.index[mask], y=series.values[mask],
+            mode="markers", name=atype.capitalize(),
+            marker=dict(color=color, size=7, symbol="diamond"),
+        )
+    )
+if st.session_state.injected and st.session_state.fault_idx is not None:
+    fidx = st.session_state.fault_idx
+    if len(fidx) > 0:
+        fig_rb.add_vrect(
+            x0=fidx[0], x1=fidx[-1],
+            fillcolor="yellow", opacity=0.15,
+            layer="below", line_width=0,
+            annotation_text=f"Injected {st.session_state.fault_type}",
+            annotation_position="top left",
+        )
+fig_rb.update_layout(
+    height=350,
+    xaxis_title="Time",
+    yaxis_title="Global Active Power (kW)",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02),
+    margin=dict(l=40, r=40, t=40, b=40),
+    hovermode="x unified",
+)
+st.markdown("**Rule-Based Flags** (◆ = flagged point)")
+st.plotly_chart(fig_rb, use_container_width=True)
+
+# Recall comparison on injected fault window
+if st.session_state.injected and st.session_state.fault_idx is not None:
+    fidx = st.session_state.fault_idx
+    fidx = fidx[fidx.isin(series.index)]
+    if len(fidx) > 0:
+        xgb_caught = (pred_labels[fidx] != "normal").sum()
+        rb_caught  = (rb_labels[fidx]   != "normal").sum()
+        n = len(fidx)
+        st.markdown("**Detection Recall on Injected Fault Window**")
+        rc1, rc2 = st.columns(2)
+        rc1.metric(
+            "XGBoost Recall",
+            f"{xgb_caught}/{n}",
+            f"{xgb_caught/n*100:.0f}%",
+            delta_color="normal",
+        )
+        rc2.metric(
+            "Rule-Based Recall",
+            f"{rb_caught}/{n}",
+            f"{rb_caught/n*100:.0f}%",
+            delta_color="normal",
+        ) # delta_color="normal" keeps the text color neutral (no green/red) since this is a comparison, not a performance metric.
